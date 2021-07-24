@@ -1,54 +1,94 @@
-<cfparam name="form.username" default="">
-<cfparam name="form.email" default="">
+
+<cfparam name="form.userID" default="">
 <cfparam name="form.role" default="">
 <cfparam name="form.status" default="">
+<cfparam name="form.resetPassword" default="">
+<cfparam name="alert.type" default="">
+<cfparam name="alert.message" default="">
 
 
 <!--- validate user input --->
-<cfif len(form.username) eq 0>
-	<cfset session.alertType = "error">
-	<cfset session.alertMessage = "Username cannot be empty">
-</cfif>
+<cfif len(alert.type) eq 0 >
+    <cfif len(form.status) neq 0 and not arrayFind([1, 0], form.status)>
+        <cfset alert.type = "error">
+        <cfset alert.message = 'Status can only be "ACTIVE" or "INACTIVE"'>
+    </cfif>
 
-<cfif len(form.email) eq 0>
-	<cfset session.alertType = "error">
-	<cfset session.alertMessage = "Email cannot be empty">
-</cfif>
+    <cfif len(form.status) eq 0>
+        <cfset alert.type = "error">
+        <cfset alert.message = "Status cannot be empty">
+    </cfif>
 
-<cfif len(form.role) eq 0>
-	<cfset session.alertType = "error">
-	<cfset session.alertMessage = "Role cannot be empty">
+    <cfif len(form.role) eq 0>
+        <cfset alert.type = "error">
+        <cfset alert.message = "Role cannot be empty">
+    </cfif>
 </cfif>
-
-<cfif len(form.email) neq 0 and not isValid('email', form.email)>
-	<cfset session.alertType = "error">
-	<cfset session.alertMessage = "Must use valid email">
-</cfif>
-
-<!--- TODO: check is username and email already exist--->
 
 
 <!--- Save Data --->
-<cfif not structKeyExists(session, "alertType") or len(session.alertType) eq 0 >
+<cfif len(alert.type) eq 0 >
 
-    <cfquery name="q_insertUser" datasource="#application.APP_DSN#">
-        UPDATE Users
-        SET vaUsername = <cfqueryparam value="#form.username#" cfsqltype="cf_sql_nvarchar">,
-            vaEmail = <cfqueryparam value="#form.email#" cfsqltype="cf_sql_nvarchar">,
-            vaRole = <cfqueryparam value="#form.role#" cfsqltype="cf_sql_nvarchar">,
-            siStatus = <cfqueryparam value="#form.status#" cfsqltype="cf_sql_integer">,
-            iModifiedBy = <cfqueryparam value="#session.user.userID#" cfsqltype="cf_sql_integer">,
-            dtModifiedOn = GETDATE()
-        WHERE iUserID = <cfqueryparam value="#form.userID#" cfsqltype="cf_sql_integer">
-    </cfquery>
+    <cfif len( form.resetPassword ) neq 0>
+        <cfset security = new component.Security()> 
+        <cfset tempPassword = security.generatePassword( 10 ) >
+        <cfset salt = security.generateSalt() >
+        <cfset hashTempPassword = security.hashPassword( tempPassword, salt )>
+    </cfif>
 
-    <cfset session.alertType = "success">
-    <cfset session.alertMessage = "User updated succesfully">
+    <cfset userRoles = listToArray(form.role)>
+
+    <cftransaction>
+        <cfquery name="q_updateUser">
+            UPDATE Users
+            SET siStatus = <cfqueryparam value="#form.status#" cfsqltype="cf_sql_integer">
+            
+            <cfif len( form.resetPassword ) neq 0>
+                , vaPassword = <cfqueryparam value="#hashTempPassword#" cfsqltype="cf_sql_nvarchar">
+                , vaSalt = <cfqueryparam value="#hashTempPassword#" cfsqltype="cf_sql_nvarchar">
+            </cfif>
+            
+                , dtModifiedOn = GETDATE()
+                , iModifiedBy = <cfqueryparam value="#session.vars.userID#" cfsqltype="cf_sql_integer">
+            WHERE iUserID = <cfqueryparam value="#form.userID#" cfsqltype="cf_sql_integer">
+        </cfquery>
+
+        <cfquery name="q_deleteUserRole">
+            DELETE FROM UserRole 
+            WHERE iUserID = <cfqueryparam value="#form.userID#" cfsqltype="cf_sql_integer">;
+        </cfquery>
+
+        <cfquery name="q_insertUserRole">
+            INSERT INTO UserRole (
+                iUserID, iRoleID, iCreatedBy
+            )
+            VALUES 
+            <cfloop  index="i" from="1" to="#arrayLen(userRoles)#">
+            (
+                <cfqueryparam value="#form.userID#" cfsqltype="cf_sql_integer">,
+                <cfqueryparam value="#userRoles[i]#" cfsqltype="cf_sql_integer">,
+                <cfqueryparam value="#session.vars.userID#" cfsqltype="cf_sql_integer">
+            )
+            <cfif i lt arrayLen( userRoles )> , </cfif>
+            </cfloop>
+        </cfquery>
+    
+    </cftransaction>
+
+    <cfset session.vars.alertType = "success">
+    <cfset session.vars.alertMessage = "User updated succesfully">
+
+    <cfif len( form.resetPassword ) neq 0>
+        <cfmodule 
+            template="#application.APP_PATH#Notification/passwordResetNotification.cfm" 
+            userID="#form.userID#"
+            tempPassword="#tempPassword#">
+    </cfif>
 
     <cflocation 
-        url="#application.APP_PATH#/userProfile/dsp_listUser.cfm" 
+        url="#application.APP_PATH#index.cfm?appmodule=User&appaction=dsp_showUser&userID=#form.userID#" 
         addtoken="false">
 </cfif>
 
 <!------------- TRY AGAIN ------------->
-<cfmodule template="dsp_updateUser.cfm">
+<cfmodule template="dsp_showUser.cfm" alert="#alert#" userID="#form.userID#">
